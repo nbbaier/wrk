@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 
 import { readdir, stat } from "node:fs/promises";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import inquirer from "inquirer";
 
 interface Config {
@@ -117,10 +117,7 @@ class WrkCLI {
 	}
 
 	private getWorkspacePath(workspaceName: string): string {
-		const expandedWorkspace = this.config.workspace.replace(
-			/^~/,
-			process.env.HOME || "",
-		);
+		const expandedWorkspace = resolve(this.config.workspace);
 		return `${expandedWorkspace}/${workspaceName}-work`;
 	}
 
@@ -390,13 +387,6 @@ EXAMPLES:
     wrk create client      # Create new project in 'client' workspace
     wrk list               # List all workspaces
     wrk config             # Open config file
-
-CONFIGURATION:
-    Configuration is stored at: $XDG_CONFIG_HOME/wrk/config.json
-    - workspace: Location of your project workspaces
-    - ide: IDE command to use (default: cursor)
-
-For more information, visit: https://github.com/your-repo/wrk
 		`.trim(),
 		);
 	}
