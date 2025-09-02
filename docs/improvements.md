@@ -4,22 +4,22 @@ This document summarizes a thorough review of the current `wrk` CLI codebase and
 
 **Progress Summary:**
 
--  [x] **Completed**: 6 items (API structure improvements, tilde expansion, version flag, unit tests)
--  [ ] **Not Implemented**: 35 items
--  **Overall Progress**: 6/41 items completed (14.6%)
+-  [x] **Completed**: 12 items (API structure improvements, tilde expansion, version flag, unit tests, quick wins)
+-  [ ] **Not Implemented**: 29 items
+-  **Overall Progress**: 12/41 items completed (29.3%)
 
 ---
 
 ### Quick wins (low effort, high value)
 
--  [ ] **Use `path.join` in `getWorkspacePath`**: Replace string concatenation with `join(expandedWorkspace, `${workspaceName}-work`)` to avoid path separator issues on non-Unix systems.
--  [ ] **Prefer `process.exitCode` over `process.exit`**: Improves testability and avoids abrupt termination in async flows. Return early after setting exit codes.
--  [ ] **Lazy-load `inquirer`**: Import `inquirer` only when interactive prompts are needed (dynamic `await import('inquirer')`). Reduces startup time and bundle size for non-interactive commands.
--  [ ] **Parallelize filesystem reads**: Use `Promise.all`/`allSettled` when mapping `readdir`/`stat` calls in `listProjectsInWorkspace` and when counting projects in `listAllWorkspaces`.
+-  [x] **Use `path.join` in `getWorkspacePath`**: Replace string concatenation with `join(expandedWorkspace, `${workspaceName}-work`)` to avoid path separator issues on non-Unix systems. _(Already implemented)_
+-  [x] **Prefer `process.exitCode` over `process.exit`**: Improves testability and avoids abrupt termination in async flows. Return early after setting exit codes. _(Fixed)_
+-  [x] **Lazy-load `inquirer`**: Import `inquirer` only when interactive prompts are needed (dynamic `await import('inquirer')`). Reduces startup time and bundle size for non-interactive commands. _(Already implemented)_
+-  [x] **Parallelize filesystem reads**: Use `Promise.all`/`allSettled` when mapping `readdir`/`stat` calls in `listProjectsInWorkspace` and when counting projects in `listAllWorkspaces`. _(Already implemented)_
 -  [x] **Harden tilde expansion**: Tilde expansion is done in some places but not all. Normalize by expanding `~` consistently via `os.homedir()` and a small helper. _(16c78a2)_
--  [ ] **Validate `config.ide` and spawn safely**: Use argument-array spawning (e.g., `Bun.spawn` with `{ cmd: [ide, projectPath] }`) to avoid shell injection and whitespace parsing issues. Validate the binary exists, error clearly if not.
+-  [x] **Validate `config.ide` and spawn safely**: Use argument-array spawning (e.g., `Bun.spawn` with `{ cmd: [ide, projectPath] }`) to avoid shell injection and whitespace parsing issues. Validate the binary exists, error clearly if not. _(Already implemented)_
 -  [x] **Add `--version` flag**: Print `package.json` version alongside the existing help. _(Already implemented in original codebase)_
--  [ ] **Improve help text consistency**: Include all available commands and any new flags suggested below; add a short description per command.
+-  [x] **Improve help text consistency**: Include all available commands and any new flags suggested below; add a short description per command. _(Enhanced with config info)_
 
 ---
 
@@ -29,10 +29,11 @@ This document summarizes a thorough review of the current `wrk` CLI codebase and
 
 -  [ ] **Non-interactive flags for automation**
 
-   -  `wrk <workspace> --project/-p <name>`: Open a specific project directly without a menu
-   -  `wrk create <workspace> <name>`: Create with a single command (no prompt)
+   -  `wrk <workspace> --project/-p <project>`: Open a specific project directly without a menu
+   -  `wrk create <workspace> <project>`: Create with a single command (no prompt)
    -  `wrk list <workspace>`: List all projects in a workspace
    -  `wrk list --json`: Emit JSON for scripting
+   -  `wrk cd <workspace> <project>`: cd into a project without opening the IDE
    -  `wrk --config-path`: Print the resolved config path
    -  `wrk --version/-v`, `wrk --help/-h`
 

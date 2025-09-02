@@ -486,6 +486,14 @@ EXAMPLES:
     wrk list               # List all workspaces with project counts
     wrk config             # Open config file for editing
     wrk --version          # Show version information
+
+CONFIGURATION:
+    wrk uses a JSON config file located at:
+    • $WRK_CONFIG_HOME/wrk/config.json (if WRK_CONFIG_HOME is set)
+    • $XDG_CONFIG_HOME/wrk/config.json (if XDG_CONFIG_HOME is set)
+    • ~/.config/wrk/config.json (default)
+
+    Run 'wrk' without arguments to create your initial configuration.
 		`.trim(),
 		);
 	}
@@ -563,9 +571,9 @@ EXAMPLES:
 			this.exitCode = 1;
 		}
 
-		// Exit with the appropriate code if there was an error
+		// Set exit code if there was an error
 		if (this.exitCode !== 0) {
-			process.exit(this.exitCode);
+			process.exitCode = this.exitCode;
 		}
 	}
 }
