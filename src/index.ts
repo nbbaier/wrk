@@ -2,7 +2,7 @@
 
 import { readdir, stat } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import { parseCommand } from "./command-router.js";
+import { type Command, parseCommand } from "./command-router.js";
 import { expandHomePath, getConfigPath, getTimeAgo } from "./utils.js";
 
 interface Config {
@@ -218,7 +218,10 @@ class WrkCLI {
 		);
 	}
 
-	private async openProject(projectPath: string): Promise<void> {
+	private async openProject(
+		projectPath: string,
+		flags?: Command["flags"],
+	): Promise<void> {
 		const projectDir = Bun.file(projectPath);
 
 		try {
@@ -234,9 +237,18 @@ class WrkCLI {
 			return;
 		}
 
+		// Handle dry-run
+		if (flags?.dryRun) {
+			console.log(`Would open project: ${projectPath}`);
+			const ideToUse = flags.ide || this.config.ide;
+			console.log(`Would use IDE: ${ideToUse}`);
+			return;
+		}
+
 		try {
 			await this.updateLastProjectPath(projectPath);
-			const validatedIde = await this.validateIdeBinary(this.config.ide);
+			const ideToUse = flags?.ide || this.config.ide;
+			const validatedIde = await this.validateIdeBinary(ideToUse);
 
 			// Use safe spawning to prevent command injection
 			const process = Bun.spawn([validatedIde, projectPath], {
@@ -255,7 +267,8 @@ class WrkCLI {
 			if (error instanceof Error) {
 				console.error(error.message);
 			} else {
-				console.error(`Error opening project with ${this.config.ide}:`, error);
+				const ideToUse = flags?.ide || this.config.ide;
+				console.error(`Error opening project with ${ideToUse}:`, error);
 			}
 			this.exitCode = 1;
 			return;
@@ -468,24 +481,45 @@ class WrkCLI {
 wrk - A minimal CLI for quickly opening projects in your IDE
 
 USAGE:
-    wrk [COMMAND] [ARGUMENTS]
+    wrk [COMMAND] [ARGUMENTS] [FLAGS]
 
 COMMANDS:
     (no command)        Open the last project you worked on
     <workspace>         Open a project from the specified workspace
-    create <workspace>  Create a new project in the specified workspace
-    list                List all available workspaces and their project counts
+    create <workspace> [project]  Create a new project in the specified workspace
+    list [workspace]    List all available workspaces or projects in a workspace
+    cd <workspace> <project>  Print the path to a project (for shell integration)
     config              Open the configuration file in your IDE for editing
+    config --get <key>  Get a configuration value
+    config --set <key>=<value>  Set a configuration value
+    config --edit       Open the configuration file for editing
     --help, -h          Show this help message
     --version, -v       Show version information
+    --config-path       Print the resolved config file path
+
+FLAGS:
+    --project, -p <name>    Open a specific project directly (no menu)
+    --json                  Output in JSON format for scripting
+    --dry-run               Preview actions without executing them
+    --ide, -i <command>     Override IDE command for this invocation
 
 EXAMPLES:
-    wrk                    # Open last project
-    wrk client             # Open a project from 'client' workspace
-    wrk create client      # Create new project in 'client' workspace
-    wrk list               # List all workspaces with project counts
-    wrk config             # Open config file for editing
-    wrk --version          # Show version information
+    wrk                                    # Open last project
+    wrk client                             # Open a project from 'client' workspace
+    wrk client --project myapp             # Open 'myapp' project directly
+    wrk create client myapp                # Create 'myapp' project non-interactively
+    wrk list                               # List all workspaces with project counts
+    wrk list client                        # List projects in 'client' workspace
+    wrk list client --json                 # List projects in JSON format
+    wrk cd client myapp                    # Print path to 'client/myapp' project
+    wrk config                             # Open config file for editing
+    wrk config --get workspace             # Get current workspace path
+    wrk config --set ide=vscode            # Set IDE to VS Code
+    wrk config --edit                      # Open config file for editing
+    wrk --version                          # Show version information
+    wrk --config-path                      # Show config file location
+    wrk client --dry-run                   # Preview what would be opened
+    wrk client --ide vscode                # Open with VS Code instead of default IDE
 
 CONFIGURATION:
     wrk uses a JSON config file located at:
@@ -498,12 +532,23 @@ CONFIGURATION:
 		);
 	}
 
-	private async openWorkspace(workspaceName: string): Promise<void> {
+	private async openWorkspace(
+		workspaceName: string,
+		flags?: Command["flags"],
+	): Promise<void> {
 		await this.ensureWorkspaceExists(workspaceName);
 
 		const projects = await this.listProjectsInWorkspace(workspaceName);
 
 		if (projects.length === 0) {
+			if (flags?.project) {
+				console.error(
+					`No projects found in ${workspaceName}. Cannot open project '${flags.project}'.`,
+				);
+				this.exitCode = 1;
+				return;
+			}
+
 			const { default: inquirer } = await import("inquirer");
 
 			const { shouldCreate } = await inquirer.prompt([
@@ -521,8 +566,183 @@ CONFIGURATION:
 			return;
 		}
 
+		// If specific project requested via flag
+		if (flags?.project) {
+			const project = projects.find((p) => p.name === flags.project);
+			if (project) {
+				await this.openProject(project.path, flags);
+			} else {
+				console.error(
+					`Project '${flags.project}' not found in ${workspaceName}.`,
+				);
+				console.error(
+					`Available projects: ${projects.map((p) => p.name).join(", ")}`,
+				);
+				this.exitCode = 1;
+			}
+			return;
+		}
+
 		const selectedProjectPath = await this.selectProjectFromList(projects);
-		await this.openProject(selectedProjectPath);
+		await this.openProject(selectedProjectPath, flags);
+	}
+
+	private async listProjectsInWorkspaceWithFlags(
+		workspaceName: string,
+		flags?: Command["flags"],
+	): Promise<void> {
+		const projects = await this.listProjectsInWorkspace(workspaceName);
+
+		if (flags?.json) {
+			const jsonOutput = {
+				workspace: workspaceName,
+				projects: projects.map((p) => ({
+					name: p.name,
+					path: p.path,
+					lastAccessed: p.lastAccessed.toISOString(),
+				})),
+			};
+			console.log(JSON.stringify(jsonOutput, null, 2));
+		} else {
+			if (projects.length === 0) {
+				console.log(`No projects found in ${workspaceName}`);
+			} else {
+				console.log(`Projects in ${workspaceName}:`);
+				for (const project of projects) {
+					console.log(
+						`  ${project.name} (${getTimeAgo(project.lastAccessed)})`,
+					);
+				}
+			}
+		}
+	}
+
+	private async createProjectNonInteractive(
+		workspaceName: string,
+		projectName: string,
+		flags?: Command["flags"],
+	): Promise<void> {
+		await this.ensureWorkspaceExists(workspaceName);
+
+		const projectPath = join(this.getWorkspacePath(workspaceName), projectName);
+		const projectDir = Bun.file(projectPath);
+
+		try {
+			await projectDir.stat();
+			console.error(
+				`Project '${projectName}' already exists in ${workspaceName}`,
+			);
+			this.exitCode = 1;
+			return;
+		} catch (_error) {
+			// Project doesn't exist, continue with creation
+		}
+
+		if (flags?.dryRun) {
+			console.log(`Would create project: ${projectPath}`);
+			return;
+		}
+
+		try {
+			await Bun.$`mkdir -p ${projectPath}`;
+			console.log(`Created project '${projectName}' at ${projectPath}`);
+			await this.openProject(projectPath, flags);
+		} catch (error) {
+			console.error("Error creating project:", error);
+			this.exitCode = 1;
+			return;
+		}
+	}
+
+	private async cdToProject(
+		workspaceName: string,
+		projectName: string,
+		flags?: Command["flags"],
+	): Promise<void> {
+		await this.ensureWorkspaceExists(workspaceName);
+
+		const projectPath = join(this.getWorkspacePath(workspaceName), projectName);
+		const projectDir = Bun.file(projectPath);
+
+		try {
+			const stats = await projectDir.stat();
+			if (!stats.isDirectory()) {
+				console.error(`Project '${projectName}' not found in ${workspaceName}`);
+				this.exitCode = 1;
+				return;
+			}
+		} catch (_error) {
+			console.error(`Project '${projectName}' not found in ${workspaceName}`);
+			this.exitCode = 1;
+			return;
+		}
+
+		if (flags?.dryRun) {
+			console.log(`Would cd to: ${projectPath}`);
+			return;
+		}
+
+		// For cd command, we just print the path so the shell can use it
+		// This is a common pattern for shell integration
+		console.log(projectPath);
+	}
+
+	private showConfigPath(): void {
+		console.log(this.configPath);
+	}
+
+	private async getConfigValue(key: string): Promise<void> {
+		await this.initialize();
+
+		const value = this.config[key as keyof Config];
+		if (value === undefined) {
+			console.error(`Config key '${key}' not found.`);
+			console.error(`Available keys: ${Object.keys(this.config).join(", ")}`);
+			this.exitCode = 1;
+			return;
+		}
+
+		console.log(value);
+	}
+
+	private async setConfigValue(keyValue: string): Promise<void> {
+		await this.initialize();
+
+		const [key, ...valueParts] = keyValue.split("=");
+		if (!key || valueParts.length === 0) {
+			console.error("Usage: wrk config --set <key>=<value>");
+			this.exitCode = 1;
+			return;
+		}
+
+		const value = valueParts.join("=");
+
+		// Validate the key
+		if (!["workspace", "ide"].includes(key)) {
+			console.error(
+				`Invalid config key '${key}'. Available keys: workspace, ide`,
+			);
+			this.exitCode = 1;
+			return;
+		}
+
+		// Validate the value
+		if (!value.trim()) {
+			console.error(`Value for '${key}' cannot be empty`);
+			this.exitCode = 1;
+			return;
+		}
+
+		// Update the config
+		(this.config as any)[key] = value.trim();
+		await this.saveConfig(this.config);
+
+		console.log(`Updated ${key} to: ${value.trim()}`);
+	}
+
+	private async editConfig(): Promise<void> {
+		await this.initialize();
+		await this.openConfig();
 	}
 
 	async run(args: string[]): Promise<void> {
@@ -539,6 +759,11 @@ CONFIGURATION:
 				return;
 			}
 
+			if (command.type === "config-path") {
+				this.showConfigPath();
+				return;
+			}
+
 			await this.initialize();
 
 			switch (command.type) {
@@ -546,19 +771,51 @@ CONFIGURATION:
 					await this.openLastProject();
 					break;
 				case "config":
-					await this.openConfig();
+					if (command.flags?.get) {
+						await this.getConfigValue(command.flags.get);
+					} else if (command.flags?.set) {
+						await this.setConfigValue(command.flags.set);
+					} else if (command.flags?.edit) {
+						await this.editConfig();
+					} else {
+						await this.openConfig();
+					}
 					break;
 				case "list":
-					await this.listAllWorkspaces();
+					if (command.workspaceName) {
+						await this.listProjectsInWorkspaceWithFlags(
+							command.workspaceName,
+							command.flags,
+						);
+					} else {
+						await this.listAllWorkspaces();
+					}
 					break;
 				case "create":
 					if (command.workspaceName) {
-						await this.createProjectInWorkspace(command.workspaceName);
+						if (command.projectName) {
+							await this.createProjectNonInteractive(
+								command.workspaceName,
+								command.projectName,
+								command.flags,
+							);
+						} else {
+							await this.createProjectInWorkspace(command.workspaceName);
+						}
+					}
+					break;
+				case "cd":
+					if (command.workspaceName && command.projectName) {
+						await this.cdToProject(
+							command.workspaceName,
+							command.projectName,
+							command.flags,
+						);
 					}
 					break;
 				case "workspace":
 					if (command.workspaceName) {
-						await this.openWorkspace(command.workspaceName);
+						await this.openWorkspace(command.workspaceName, command.flags);
 					}
 					break;
 			}

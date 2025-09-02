@@ -8,7 +8,7 @@
 		"wrk": "./dist/wrk.js"
 	},
 	"scripts": {
-		"build": "bun build --target=bun --outfile=./dist/wrk.js src/index.ts",
+		"build": "bun build --target=bun --outfile=./dist/wrk.js src/index.ts --minify",
 		"install-global": "bun run build && cp dist/wrk.js /usr/local/bin/wrk",
 		"link": "bun run build && bun link",
 		"test": "bun test"

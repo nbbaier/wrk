@@ -4,9 +4,9 @@ This document summarizes a thorough review of the current `wrk` CLI codebase and
 
 **Progress Summary:**
 
--  [x] **Completed**: 12 items (API structure improvements, tilde expansion, version flag, unit tests, quick wins)
--  [ ] **Not Implemented**: 29 items
--  **Overall Progress**: 12/41 items completed (29.3%)
+-  [x] **Completed**: 24 items (API structure improvements, tilde expansion, version flag, unit tests, quick wins, CLI UX features, config management)
+-  [ ] **Not Implemented**: 17 items
+-  **Overall Progress**: 24/41 items completed (58.5%)
 
 ---
 
@@ -27,7 +27,7 @@ This document summarizes a thorough review of the current `wrk` CLI codebase and
 
 -  [ ] Behavior change: When opening a project, cd into it and open the project in the IDE.
 
--  [ ] **Non-interactive flags for automation**
+-  [x] **Non-interactive flags for automation**
 
    -  `wrk <workspace> --project/-p <project>`: Open a specific project directly without a menu
    -  `wrk create <workspace> <project>`: Create with a single command (no prompt)
@@ -37,13 +37,13 @@ This document summarizes a thorough review of the current `wrk` CLI codebase and
    -  `wrk --config-path`: Print the resolved config path
    -  `wrk --version/-v`, `wrk --help/-h`
 
--  [ ] **Config management subcommands**
+-  [x] **Config management subcommands**
 
    -  `wrk config --get <key>` → prints value
    -  `wrk config --set <key>=<value>` → updates config safely
    -  `wrk config --edit` → opens config (current default)
 
--  [ ] **Quality-of-life**
+-  [x] **Quality-of-life**
    -  `--dry-run` to preview actions (e.g., which path will be opened/created)
    -  Optional `--ide/-i <cmd>` flag to override per-invocation
 
@@ -150,8 +150,8 @@ This document summarizes a thorough review of the current `wrk` CLI codebase and
 ### Roadmap (proposed)
 
 1. [ ] Quick wins: path joins, exit codes, lazy `inquirer`, safe spawn
-2. [ ] Non-interactive flags and improved help/version
-3. [ ] Parallelize listings and add JSON output
+2. [x] Non-interactive flags and improved help/version
+3. [x] Parallelize listings and add JSON output
 4. [x] Config subcommands and env overrides for tests _(16c78a2, 522bc2d)_
 5. [ ] Test suite expansion (integration + unit)
 6. [ ] CI and packaging metadata updates
