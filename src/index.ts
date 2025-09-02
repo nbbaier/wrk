@@ -2,7 +2,8 @@
 
 import { readdir, stat } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import inquirer from "inquirer";
+import { parseCommand } from "./command-router.js";
+import { expandHomePath, getConfigPath, getTimeAgo } from "./utils.js";
 
 interface Config {
 	workspace: string;
@@ -19,20 +20,15 @@ interface ProjectInfo {
 class WrkCLI {
 	private config: Config;
 	private configPath: string;
+	private exitCode = 0;
 
 	constructor() {
-		this.configPath = this.getConfigPath();
+		this.configPath = getConfigPath();
 		this.config = { workspace: "", ide: "cursor", lastProjectPath: undefined };
 	}
 
 	private async initialize(): Promise<void> {
 		this.config = await this.loadConfig();
-	}
-
-	private getConfigPath(): string {
-		const xdgConfigHome =
-			process.env.XDG_CONFIG_HOME || `${process.env.HOME}/.config`;
-		return `${xdgConfigHome}/wrk/config.json`;
 	}
 
 	private async loadConfig(): Promise<Config> {
@@ -51,6 +47,8 @@ class WrkCLI {
 
 	private async createDefaultConfig(): Promise<Config> {
 		console.log("Welcome to wrk! Let's set up your configuration.");
+
+		const { default: inquirer } = await import("inquirer");
 
 		const { workspace } = await inquirer.prompt([
 			{
@@ -116,19 +114,49 @@ class WrkCLI {
 		await this.saveConfig(this.config);
 	}
 
+	private getVersion(): string {
+		try {
+			const packageJson = require("../package.json");
+			return packageJson.version;
+		} catch (_error) {
+			return "unknown";
+		}
+	}
+
+	private async validateIdeBinary(ideCommand: string): Promise<string> {
+		try {
+			// Try to resolve the command path
+			const { stdout } = await Bun.$`which ${ideCommand}`.quiet();
+			const resolvedPath = stdout.toString().trim();
+			if (resolvedPath) {
+				return resolvedPath;
+			}
+		} catch (_error) {
+			// Try to find it in common locations or as an absolute path
+			const expandedIde = expandHomePath(ideCommand);
+			try {
+				await stat(expandedIde);
+				return expandedIde;
+			} catch (_error) {
+				// IDE binary not found
+			}
+		}
+
+		throw new Error(
+			`IDE command '${ideCommand}' not found. Please install it or run 'wrk config --set ide=<your-ide>' to set a different IDE.`,
+		);
+	}
+
 	private getWorkspacePath(workspaceName: string): string {
-		const expandedWorkspace = resolve(this.config.workspace);
-		return `${expandedWorkspace}/${workspaceName}-work`;
+		const expandedWorkspace = resolve(expandHomePath(this.config.workspace));
+		return join(expandedWorkspace, `${workspaceName}-work`);
 	}
 
 	private async listWorkspaces(): Promise<string[]> {
 		const workspaces: string[] = [];
 
 		try {
-			const workspacePath = this.config.workspace.replace(
-				/^~/,
-				process.env.HOME || "",
-			);
+			const workspacePath = expandHomePath(this.config.workspace);
 			const entries = await readdir(workspacePath, {
 				withFileTypes: true,
 			});
@@ -157,15 +185,28 @@ class WrkCLI {
 				withFileTypes: true,
 			});
 
-			for (const entry of entries) {
-				if (entry.isDirectory()) {
+			const statPromises = entries
+				.filter((entry) => entry.isDirectory())
+				.map(async (entry) => {
 					const projectPath = join(workspacePath, entry.name);
-					const stats = await stat(projectPath);
-					projects.push({
-						name: entry.name,
-						path: projectPath,
-						lastAccessed: stats.mtime,
-					});
+					try {
+						const stats = await stat(projectPath);
+						return {
+							name: entry.name,
+							path: projectPath,
+							lastAccessed: stats.mtime,
+						};
+					} catch (_error) {
+						// Skip entries that can't be stat'd
+						return null;
+					}
+				});
+
+			const results = await Promise.allSettled(statPromises);
+
+			for (const result of results) {
+				if (result.status === "fulfilled" && result.value) {
+					projects.push(result.value);
 				}
 			}
 		} catch (_error) {
@@ -184,19 +225,40 @@ class WrkCLI {
 			const stats = await projectDir.stat();
 			if (!stats.isDirectory()) {
 				console.error(`Project not found at ${projectPath}`);
-				process.exit(1);
+				this.exitCode = 1;
+				return;
 			}
 		} catch (_error) {
 			console.error(`Project not found at ${projectPath}`);
-			process.exit(1);
+			this.exitCode = 1;
+			return;
 		}
 
 		try {
 			await this.updateLastProjectPath(projectPath);
-			await Bun.$`${this.config.ide} ${projectPath}`;
+			const validatedIde = await this.validateIdeBinary(this.config.ide);
+
+			// Use safe spawning to prevent command injection
+			const process = Bun.spawn([validatedIde, projectPath], {
+				stdout: "inherit",
+				stderr: "inherit",
+				stdin: "inherit",
+			});
+
+			const exitCode = await process.exited;
+			if (exitCode !== 0) {
+				console.error(`IDE exited with code ${exitCode}`);
+				this.exitCode = exitCode;
+				return;
+			}
 		} catch (error) {
-			console.error(`Error opening project with ${this.config.ide}:`, error);
-			process.exit(1);
+			if (error instanceof Error) {
+				console.error(error.message);
+			} else {
+				console.error(`Error opening project with ${this.config.ide}:`, error);
+			}
+			this.exitCode = 1;
+			return;
 		}
 	}
 
@@ -207,8 +269,10 @@ class WrkCLI {
 			throw new Error("No projects available");
 		}
 
+		const { default: inquirer } = await import("inquirer");
+
 		const choices = projects.map((project) => ({
-			name: `${project.name} (${this.getTimeAgo(project.lastAccessed)})`,
+			name: `${project.name} (${getTimeAgo(project.lastAccessed)})`,
 			value: project.path,
 		}));
 
@@ -225,6 +289,8 @@ class WrkCLI {
 	}
 
 	private async promptForProjectName(workspaceName: string): Promise<string> {
+		const { default: inquirer } = await import("inquirer");
+
 		const { projectName } = await inquirer.prompt([
 			{
 				type: "input",
@@ -253,6 +319,8 @@ class WrkCLI {
 				throw new Error("Not a directory");
 			}
 		} catch (_error) {
+			const { default: inquirer } = await import("inquirer");
+
 			const { shouldCreate } = await inquirer.prompt([
 				{
 					type: "confirm",
@@ -266,7 +334,8 @@ class WrkCLI {
 				await Bun.$`mkdir -p ${workspacePath}`;
 				console.log(`Created workspace '${workspaceName}' at ${workspacePath}`);
 			} else {
-				process.exit(0);
+				this.exitCode = 0;
+				return;
 			}
 		}
 	}
@@ -283,7 +352,8 @@ class WrkCLI {
 			console.error(
 				`Project '${projectName}' already exists in ${workspaceName}`,
 			);
-			process.exit(1);
+			this.exitCode = 1;
+			return;
 		} catch (_error) {
 			// Project doesn't exist, continue with creation
 		}
@@ -294,7 +364,8 @@ class WrkCLI {
 			await this.openProject(projectPath);
 		} catch (error) {
 			console.error("Error creating project:", error);
-			process.exit(1);
+			this.exitCode = 1;
+			return;
 		}
 	}
 
@@ -331,19 +402,26 @@ class WrkCLI {
 
 		if (workspaces.length === 0) {
 			console.log("No workspaces found.");
-			const expandedWorkspace = this.config.workspace.replace(
-				/^~/,
-				process.env.HOME || "",
-			);
+			const expandedWorkspace = expandHomePath(this.config.workspace);
 			console.log(`Workspace directory: ${expandedWorkspace}`);
 			return;
 		}
 
 		console.log("Available workspaces:");
-		for (const workspace of workspaces) {
+
+		const countPromises = workspaces.map(async (workspace) => {
 			const projectCount = (await this.listProjectsInWorkspace(workspace))
 				.length;
-			console.log(`  ${workspace} (${projectCount} projects)`);
+			return { workspace, projectCount };
+		});
+
+		const results = await Promise.allSettled(countPromises);
+
+		for (const result of results) {
+			if (result.status === "fulfilled") {
+				const { workspace, projectCount } = result.value;
+				console.log(`  ${workspace} (${projectCount} projects)`);
+			}
 		}
 	}
 
@@ -358,10 +436,29 @@ class WrkCLI {
 		}
 
 		try {
-			await Bun.$`${this.config.ide} ${this.configPath}`;
+			const validatedIde = await this.validateIdeBinary(this.config.ide);
+
+			// Use safe spawning to prevent command injection
+			const process = Bun.spawn([validatedIde, this.configPath], {
+				stdout: "inherit",
+				stderr: "inherit",
+				stdin: "inherit",
+			});
+
+			const exitCode = await process.exited;
+			if (exitCode !== 0) {
+				console.error(`IDE exited with code ${exitCode}`);
+				this.exitCode = exitCode;
+				return;
+			}
 		} catch (error) {
-			console.error(`Error opening config with ${this.config.ide}:`, error);
-			process.exit(1);
+			if (error instanceof Error) {
+				console.error(error.message);
+			} else {
+				console.error(`Error opening config with ${this.config.ide}:`, error);
+			}
+			this.exitCode = 1;
+			return;
 		}
 	}
 
@@ -374,19 +471,21 @@ USAGE:
     wrk [COMMAND] [ARGUMENTS]
 
 COMMANDS:
-    (no command)     Open the last project you worked on
-    <workspace>      Open a project from the specified workspace
-    create <name>    Create a new project in the specified workspace
-    list             List all available workspaces
-    config           Open the configuration file in your IDE
-    --help, -h       Show this help message
+    (no command)        Open the last project you worked on
+    <workspace>         Open a project from the specified workspace
+    create <workspace>  Create a new project in the specified workspace
+    list                List all available workspaces and their project counts
+    config              Open the configuration file in your IDE for editing
+    --help, -h          Show this help message
+    --version, -v       Show version information
 
 EXAMPLES:
     wrk                    # Open last project
     wrk client             # Open a project from 'client' workspace
     wrk create client      # Create new project in 'client' workspace
-    wrk list               # List all workspaces
-    wrk config             # Open config file
+    wrk list               # List all workspaces with project counts
+    wrk config             # Open config file for editing
+    wrk --version          # Show version information
 		`.trim(),
 		);
 	}
@@ -397,6 +496,8 @@ EXAMPLES:
 		const projects = await this.listProjectsInWorkspace(workspaceName);
 
 		if (projects.length === 0) {
+			const { default: inquirer } = await import("inquirer");
+
 			const { shouldCreate } = await inquirer.prompt([
 				{
 					type: "confirm",
@@ -416,47 +517,55 @@ EXAMPLES:
 		await this.openProject(selectedProjectPath);
 	}
 
-	private getTimeAgo(date: Date): string {
-		const now = new Date();
-		const diffMs = now.getTime() - date.getTime();
-		const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
-
-		if (diffDays === 0) {
-			return "today";
-		} else if (diffDays === 1) {
-			return "yesterday";
-		} else if (diffDays < 7) {
-			return `${diffDays} days ago`;
-		} else {
-			return date.toLocaleDateString();
-		}
-	}
-
 	async run(args: string[]): Promise<void> {
-		const command = args[0];
+		try {
+			const command = parseCommand(args);
 
-		if (command === "--help" || command === "-h") {
-			this.showHelp();
-			return;
+			if (command.type === "help") {
+				this.showHelp();
+				return;
+			}
+
+			if (command.type === "version") {
+				console.log(`wrk ${this.getVersion()}`);
+				return;
+			}
+
+			await this.initialize();
+
+			switch (command.type) {
+				case "last":
+					await this.openLastProject();
+					break;
+				case "config":
+					await this.openConfig();
+					break;
+				case "list":
+					await this.listAllWorkspaces();
+					break;
+				case "create":
+					if (command.workspaceName) {
+						await this.createProjectInWorkspace(command.workspaceName);
+					}
+					break;
+				case "workspace":
+					if (command.workspaceName) {
+						await this.openWorkspace(command.workspaceName);
+					}
+					break;
+			}
+		} catch (error) {
+			if (error instanceof Error) {
+				console.error(error.message);
+			} else {
+				console.error("Unknown error:", error);
+			}
+			this.exitCode = 1;
 		}
 
-		await this.initialize();
-
-		const workspaceName = args[1];
-
-		if (!command) {
-			await this.openLastProject();
-		} else if (command === "config") {
-			await this.openConfig();
-		} else if (command === "list") {
-			await this.listAllWorkspaces();
-		} else if (command === "create" && workspaceName) {
-			await this.createProjectInWorkspace(workspaceName);
-		} else if (command === "create") {
-			console.log("Usage: wrk create <workspace>");
-			process.exit(1);
-		} else {
-			await this.openWorkspace(command);
+		// Exit with the appropriate code if there was an error
+		if (this.exitCode !== 0) {
+			process.exit(this.exitCode);
 		}
 	}
 }
