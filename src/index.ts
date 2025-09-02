@@ -117,7 +117,36 @@ class WrkCLI {
 	}
 
 	private getWorkspacePath(workspaceName: string): string {
-		return `${this.config.workspace}/${workspaceName}-work`;
+		const expandedWorkspace = this.config.workspace.replace(
+			/^~/,
+			process.env.HOME || "",
+		);
+		return `${expandedWorkspace}/${workspaceName}-work`;
+	}
+
+	private async listWorkspaces(): Promise<string[]> {
+		const workspaces: string[] = [];
+
+		try {
+			const workspacePath = this.config.workspace.replace(
+				/^~/,
+				process.env.HOME || "",
+			);
+			const entries = await readdir(workspacePath, {
+				withFileTypes: true,
+			});
+
+			for (const entry of entries) {
+				if (entry.isDirectory() && entry.name.endsWith("-work")) {
+					const workspaceName = entry.name.replace("-work", "");
+					workspaces.push(workspaceName);
+				}
+			}
+		} catch (_error) {
+			return [];
+		}
+
+		return workspaces.sort();
 	}
 
 	private async listProjectsInWorkspace(
@@ -154,7 +183,13 @@ class WrkCLI {
 	private async openProject(projectPath: string): Promise<void> {
 		const projectDir = Bun.file(projectPath);
 
-		if (!(await projectDir.exists())) {
+		try {
+			const stats = await projectDir.stat();
+			if (!stats.isDirectory()) {
+				console.error(`Project not found at ${projectPath}`);
+				process.exit(1);
+			}
+		} catch (_error) {
 			console.error(`Project not found at ${projectPath}`);
 			process.exit(1);
 		}
@@ -202,6 +237,7 @@ class WrkCLI {
 					if (!input.trim()) {
 						return "Project name cannot be empty";
 					}
+
 					return true;
 				},
 			},
@@ -214,7 +250,12 @@ class WrkCLI {
 		const workspacePath = this.getWorkspacePath(workspaceName);
 		const workspaceDir = Bun.file(workspacePath);
 
-		if (!(await workspaceDir.exists())) {
+		try {
+			const stats = await workspaceDir.stat();
+			if (!stats.isDirectory()) {
+				throw new Error("Not a directory");
+			}
+		} catch (_error) {
 			const { shouldCreate } = await inquirer.prompt([
 				{
 					type: "confirm",
@@ -240,11 +281,14 @@ class WrkCLI {
 		const projectPath = join(this.getWorkspacePath(workspaceName), projectName);
 		const projectDir = Bun.file(projectPath);
 
-		if (await projectDir.exists()) {
+		try {
+			await projectDir.stat();
 			console.error(
 				`Project '${projectName}' already exists in ${workspaceName}`,
 			);
 			process.exit(1);
+		} catch (_error) {
+			// Project doesn't exist, continue with creation
 		}
 
 		try {
@@ -266,7 +310,15 @@ class WrkCLI {
 		}
 
 		const lastProjectDir = Bun.file(this.config.lastProjectPath);
-		if (!(await lastProjectDir.exists())) {
+		try {
+			const stats = await lastProjectDir.stat();
+			if (!stats.isDirectory()) {
+				console.log(
+					"Last project no longer exists. Use 'wrk <workspace>' to open a project.",
+				);
+				return;
+			}
+		} catch (_error) {
 			console.log(
 				"Last project no longer exists. Use 'wrk <workspace>' to open a project.",
 			);
@@ -277,10 +329,33 @@ class WrkCLI {
 		await this.openProject(this.config.lastProjectPath);
 	}
 
+	private async listAllWorkspaces(): Promise<void> {
+		const workspaces = await this.listWorkspaces();
+
+		if (workspaces.length === 0) {
+			console.log("No workspaces found.");
+			const expandedWorkspace = this.config.workspace.replace(
+				/^~/,
+				process.env.HOME || "",
+			);
+			console.log(`Workspace directory: ${expandedWorkspace}`);
+			return;
+		}
+
+		console.log("Available workspaces:");
+		for (const workspace of workspaces) {
+			const projectCount = (await this.listProjectsInWorkspace(workspace))
+				.length;
+			console.log(`  ${workspace} (${projectCount} projects)`);
+		}
+	}
+
 	private async openConfig(): Promise<void> {
 		const configFile = Bun.file(this.configPath);
 
-		if (!(await configFile.exists())) {
+		try {
+			await configFile.stat();
+		} catch (_error) {
 			console.log("Config file does not exist. Run wrk to create it.");
 			return;
 		}
@@ -305,6 +380,7 @@ COMMANDS:
     (no command)     Open the last project you worked on
     <workspace>      Open a project from the specified workspace
     create <name>    Create a new project in the specified workspace
+    list             List all available workspaces
     config           Open the configuration file in your IDE
     --help, -h       Show this help message
 
@@ -312,6 +388,7 @@ EXAMPLES:
     wrk                    # Open last project
     wrk client             # Open a project from 'client' workspace
     wrk create client      # Create new project in 'client' workspace
+    wrk list               # List all workspaces
     wrk config             # Open config file
 
 CONFIGURATION:
@@ -381,6 +458,8 @@ For more information, visit: https://github.com/your-repo/wrk
 			await this.openLastProject();
 		} else if (command === "config") {
 			await this.openConfig();
+		} else if (command === "list") {
+			await this.listAllWorkspaces();
 		} else if (command === "create" && workspaceName) {
 			await this.createProjectInWorkspace(workspaceName);
 		} else if (command === "create") {
