@@ -1,4 +1,5 @@
 import { homedir } from "node:os";
+import { join, resolve } from "node:path";
 
 export function expandHomePath(path: string): string {
 	if (path.startsWith("~")) {
@@ -27,6 +28,6 @@ export function getConfigPath(): string {
 	const configHome =
 		process.env.WRK_CONFIG_HOME ||
 		process.env.XDG_CONFIG_HOME ||
-		`${process.env.HOME}/.config`;
-	return `${configHome}/wrk/config.json`;
+		join(process.env.HOME || homedir(), ".config");
+	return resolve(join(configHome, "wrk", "config.json"));
 }

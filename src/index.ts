@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 
 import { readdir, stat } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { join, resolve, dirname } from "node:path";
 import { type Command, parseCommand } from "./command-router.js";
 import { expandHomePath, getConfigPath, getTimeAgo } from "./utils.js";
 
@@ -55,7 +55,7 @@ class WrkCLI {
 				type: "input",
 				name: "workspace",
 				message: "Enter your workspace directory path:",
-				default: process.env.WORKSPACE || `${process.env.HOME}/workspace`,
+				default: process.env.WORKSPACE || join(process.env.HOME || "", "workspace"),
 				validate: (input: string) => {
 					if (!input.trim()) {
 						return "Workspace path cannot be empty";
@@ -96,11 +96,7 @@ class WrkCLI {
 
 	private async saveConfig(config: Config): Promise<void> {
 		try {
-			const configDir = this.configPath.substring(
-				0,
-				this.configPath.lastIndexOf("/"),
-			);
-			await Bun.$`mkdir -p ${configDir}`;
+			await Bun.$`mkdir -p ${dirname(this.configPath)}`;
 
 			const configFile = Bun.file(this.configPath);
 			await Bun.write(configFile, JSON.stringify(config, null, 2));
@@ -156,7 +152,7 @@ class WrkCLI {
 		const workspaces: string[] = [];
 
 		try {
-			const workspacePath = expandHomePath(this.config.workspace);
+			const workspacePath = resolve(expandHomePath(this.config.workspace));
 			const entries = await readdir(workspacePath, {
 				withFileTypes: true,
 			});
@@ -222,10 +218,8 @@ class WrkCLI {
 		projectPath: string,
 		flags?: Command["flags"],
 	): Promise<void> {
-		const projectDir = Bun.file(projectPath);
-
 		try {
-			const stats = await projectDir.stat();
+			const stats = await stat(projectPath);
 			if (!stats.isDirectory()) {
 				console.error(`Project not found at ${projectPath}`);
 				this.exitCode = 1;
@@ -324,10 +318,9 @@ class WrkCLI {
 
 	private async ensureWorkspaceExists(workspaceName: string): Promise<void> {
 		const workspacePath = this.getWorkspacePath(workspaceName);
-		const workspaceDir = Bun.file(workspacePath);
 
 		try {
-			const stats = await workspaceDir.stat();
+			const stats = await stat(workspacePath);
 			if (!stats.isDirectory()) {
 				throw new Error("Not a directory");
 			}
@@ -358,10 +351,9 @@ class WrkCLI {
 
 		const projectName = await this.promptForProjectName(workspaceName);
 		const projectPath = join(this.getWorkspacePath(workspaceName), projectName);
-		const projectDir = Bun.file(projectPath);
 
 		try {
-			await projectDir.stat();
+			await stat(projectPath);
 			console.error(
 				`Project '${projectName}' already exists in ${workspaceName}`,
 			);
@@ -390,9 +382,8 @@ class WrkCLI {
 			return;
 		}
 
-		const lastProjectDir = Bun.file(this.config.lastProjectPath);
 		try {
-			const stats = await lastProjectDir.stat();
+			const stats = await stat(this.config.lastProjectPath);
 			if (!stats.isDirectory()) {
 				console.log(
 					"Last project no longer exists. Use 'wrk <workspace>' to open a project.",
@@ -439,10 +430,8 @@ class WrkCLI {
 	}
 
 	private async openConfig(): Promise<void> {
-		const configFile = Bun.file(this.configPath);
-
 		try {
-			await configFile.stat();
+			await stat(this.configPath);
 		} catch (_error) {
 			console.log("Config file does not exist. Run wrk to create it.");
 			return;
@@ -528,7 +517,7 @@ CONFIGURATION:
     • ~/.config/wrk/config.json (default)
 
     Run 'wrk' without arguments to create your initial configuration.
-		`.trim(),
+			`.trim(),
 		);
 	}
 
@@ -625,10 +614,9 @@ CONFIGURATION:
 		await this.ensureWorkspaceExists(workspaceName);
 
 		const projectPath = join(this.getWorkspacePath(workspaceName), projectName);
-		const projectDir = Bun.file(projectPath);
 
 		try {
-			await projectDir.stat();
+			await stat(projectPath);
 			console.error(
 				`Project '${projectName}' already exists in ${workspaceName}`,
 			);
@@ -662,10 +650,9 @@ CONFIGURATION:
 		await this.ensureWorkspaceExists(workspaceName);
 
 		const projectPath = join(this.getWorkspacePath(workspaceName), projectName);
-		const projectDir = Bun.file(projectPath);
 
 		try {
-			const stats = await projectDir.stat();
+			const stats = await stat(projectPath);
 			if (!stats.isDirectory()) {
 				console.error(`Project '${projectName}' not found in ${workspaceName}`);
 				this.exitCode = 1;
