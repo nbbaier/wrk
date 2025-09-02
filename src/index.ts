@@ -50,16 +50,47 @@ class WrkCLI {
 	}
 
 	private async createDefaultConfig(): Promise<Config> {
-		const workspace = process.env.WORKSPACE || `${process.env.HOME}/workspace`;
+		console.log("Welcome to wrk! Let's set up your configuration.");
+
+		const { workspace } = await inquirer.prompt([
+			{
+				type: "input",
+				name: "workspace",
+				message: "Enter your workspace directory path:",
+				default: process.env.WORKSPACE || `${process.env.HOME}/workspace`,
+				validate: (input: string) => {
+					if (!input.trim()) {
+						return "Workspace path cannot be empty";
+					}
+					return true;
+				},
+			},
+		]);
+
+		const { ide } = await inquirer.prompt([
+			{
+				type: "input",
+				name: "ide",
+				message: "Enter your preferred IDE command:",
+				default: "cursor",
+				validate: (input: string) => {
+					if (!input.trim()) {
+						return "IDE command cannot be empty";
+					}
+					return true;
+				},
+			},
+		]);
+
 		const config: Config = {
-			workspace,
-			ide: "cursor",
+			workspace: workspace.trim(),
+			ide: ide.trim(),
 			lastProjectPath: undefined,
 		};
 
 		await this.saveConfig(config);
-		console.log(`Created default config at ${this.configPath}`);
-		console.log(`Workspace set to: ${workspace}`);
+		console.log(`Created config at ${this.configPath}`);
+		console.log(`Workspace set to: ${config.workspace}`);
 		console.log(`IDE set to: ${config.ide}`);
 
 		return config;
@@ -246,6 +277,53 @@ class WrkCLI {
 		await this.openProject(this.config.lastProjectPath);
 	}
 
+	private async openConfig(): Promise<void> {
+		const configFile = Bun.file(this.configPath);
+
+		if (!(await configFile.exists())) {
+			console.log("Config file does not exist. Run wrk to create it.");
+			return;
+		}
+
+		try {
+			await Bun.$`${this.config.ide} ${this.configPath}`;
+		} catch (error) {
+			console.error(`Error opening config with ${this.config.ide}:`, error);
+			process.exit(1);
+		}
+	}
+
+	private showHelp(): void {
+		console.log(
+			`
+wrk - A minimal CLI for quickly opening projects in your IDE
+
+USAGE:
+    wrk [COMMAND] [ARGUMENTS]
+
+COMMANDS:
+    (no command)     Open the last project you worked on
+    <workspace>      Open a project from the specified workspace
+    create <name>    Create a new project in the specified workspace
+    config           Open the configuration file in your IDE
+    --help, -h       Show this help message
+
+EXAMPLES:
+    wrk                    # Open last project
+    wrk client             # Open a project from 'client' workspace
+    wrk create client      # Create new project in 'client' workspace
+    wrk config             # Open config file
+
+CONFIGURATION:
+    Configuration is stored at: $XDG_CONFIG_HOME/wrk/config.json
+    - workspace: Location of your project workspaces
+    - ide: IDE command to use (default: cursor)
+
+For more information, visit: https://github.com/your-repo/wrk
+		`.trim(),
+		);
+	}
+
 	private async openWorkspace(workspaceName: string): Promise<void> {
 		await this.ensureWorkspaceExists(workspaceName);
 
@@ -288,13 +366,21 @@ class WrkCLI {
 	}
 
 	async run(args: string[]): Promise<void> {
+		const command = args[0];
+
+		if (command === "--help" || command === "-h") {
+			this.showHelp();
+			return;
+		}
+
 		await this.initialize();
 
-		const command = args[0];
 		const workspaceName = args[1];
 
 		if (!command) {
 			await this.openLastProject();
+		} else if (command === "config") {
+			await this.openConfig();
 		} else if (command === "create" && workspaceName) {
 			await this.createProjectInWorkspace(workspaceName);
 		} else if (command === "create") {

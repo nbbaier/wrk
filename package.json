@@ -8,7 +8,7 @@
 		"wrk": "./src/index.ts"
 	},
 	"scripts": {
-		"build": "bun build --compile --outfile=wrk src/index.ts",
+		"build": "bun build --compile --outfile=./dist/wrk src/index.ts",
 		"install-global": "bun run build && cp wrk /usr/local/bin/",
 		"test": "bun test"
 	},
