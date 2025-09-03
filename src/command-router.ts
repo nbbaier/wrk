@@ -1,3 +1,5 @@
+import { Command as CommanderCommand } from 'commander';
+
 export interface Command {
 	type:
 		| "help"
@@ -23,92 +25,162 @@ export interface Command {
 }
 
 export function parseCommand(args: string[]): Command {
+	// Handle special cases first
 	if (args.length === 0) {
 		return { type: "last" };
 	}
-
-	// Check for global flags first
+	
 	if (args[0] === "--help" || args[0] === "-h") {
 		return { type: "help" };
 	}
-
+	
 	if (args[0] === "--version" || args[0] === "-v") {
 		return { type: "version" };
 	}
-
+	
 	if (args[0] === "--config-path") {
 		return { type: "config-path" };
 	}
-
-	const command = args[0];
-	const flags: Command["flags"] = {};
-	let workspaceName: string | undefined;
-	let projectName: string | undefined;
-
-	// Parse flags
-	for (let i = 1; i < args.length; i++) {
-		const arg = args[i];
-
-		if (arg === "--json") {
-			flags.json = true;
-		} else if (arg === "--dry-run") {
-			flags.dryRun = true;
-		} else if (arg === "--project" || arg === "-p") {
-			if (i + 1 >= args.length) {
-				throw new Error("--project/-p requires a project name");
+	
+	const firstArg = args[0];
+	
+	// Check if first argument is a known command
+	const knownCommands = ['config', 'list', 'create', 'cd'];
+	const isKnownCommand = knownCommands.includes(firstArg);
+	
+	if (isKnownCommand) {
+		// Use commander for known commands
+		const program = new CommanderCommand();
+		
+		program
+			.name('wrk')
+			.description('A minimal CLI for quickly opening projects in your IDE')
+			.version('1.0.0')
+			.exitOverride(); // Prevent process.exit() calls
+		
+		let parsedCommand: Command | null = null;
+		
+		// Config command
+		program
+			.command('config')
+			.description('Open the configuration file in your IDE for editing')
+			.option('--get <key>', 'Get a configuration value')
+			.option('--set <key=value>', 'Set a configuration value')
+			.option('--edit', 'Open the configuration file for editing')
+			.action((options) => {
+				parsedCommand = {
+					type: 'config',
+					flags: {
+						get: options.get,
+						set: options.set,
+						edit: options.edit,
+					}
+				};
+			});
+		
+		// List command
+		program
+			.command('list')
+			.argument('[workspace]', 'Workspace to list projects from')
+			.description('List all available workspaces or projects in a workspace')
+			.option('--json', 'Output in JSON format for scripting')
+			.action((workspace, options) => {
+				parsedCommand = {
+					type: 'list',
+					workspaceName: workspace,
+					flags: {
+						json: options.json,
+					}
+				};
+			});
+		
+		// Create command
+		program
+			.command('create')
+			.argument('<workspace>', 'Workspace name')
+			.argument('[project]', 'Project name (optional)')
+			.description('Create a new project in the specified workspace')
+			.option('--dry-run', 'Preview actions without executing them')
+			.option('-i, --ide <command>', 'Override IDE command for this invocation')
+			.action((workspace, project, options) => {
+				parsedCommand = {
+					type: 'create',
+					workspaceName: workspace,
+					projectName: project,
+					flags: {
+						dryRun: options.dryRun,
+						ide: options.ide,
+					}
+				};
+			});
+		
+		// CD command
+		program
+			.command('cd')
+			.argument('<workspace>', 'Workspace name')
+			.argument('<project>', 'Project name')
+			.description('Print the path to a project (for shell integration)')
+			.option('--dry-run', 'Preview actions without executing them')
+			.action((workspace, project, options) => {
+				parsedCommand = {
+					type: 'cd',
+					workspaceName: workspace,
+					projectName: project,
+					flags: {
+						dryRun: options.dryRun,
+					}
+				};
+			});
+		
+		try {
+			program.parse(args, { from: 'user' });
+			
+			if (parsedCommand) {
+				return parsedCommand;
 			}
-			flags.project = args[++i];
-		} else if (arg === "--ide" || arg === "-i") {
-			if (i + 1 >= args.length) {
-				throw new Error("--ide/-i requires an IDE command");
+			
+			// Default to help if nothing matches
+			return { type: "help" };
+			
+		} catch (error) {
+			// Commander throws errors for invalid commands/options
+			if (error instanceof Error) {
+				throw error;
 			}
-			flags.ide = args[++i];
-		} else if (!workspaceName) {
-			workspaceName = arg;
-		} else if (!projectName) {
-			projectName = arg;
+			throw new Error(`Command parsing failed: ${error}`);
 		}
-	}
-
-	// Handle commands
-	if (command === "config") {
-		// Parse config subcommands
-		if (args[1] === "--get") {
-			if (!args[2]) {
-				throw new Error("Usage: wrk config --get <key>");
+	} else {
+		// Handle as workspace command - parse manually for better control
+		const workspaceName = firstArg;
+		const flags: Command["flags"] = {};
+		
+		// Parse remaining args for flags manually
+		for (let i = 1; i < args.length; i++) {
+			const arg = args[i];
+			
+			if (arg === "--json") {
+				flags.json = true;
+			} else if (arg === "--dry-run") {
+				flags.dryRun = true;
+			} else if (arg === "--project" || arg === "-p") {
+				if (i + 1 >= args.length) {
+					throw new Error("--project/-p requires a project name");
+				}
+				flags.project = args[++i];
+			} else if (arg === "--ide" || arg === "-i") {
+				if (i + 1 >= args.length) {
+					throw new Error("--ide/-i requires an IDE command");
+				}
+				flags.ide = args[++i];
+			} else {
+				// Unknown flag/argument - let it pass for now
 			}
-			return { type: "config", flags: { ...flags, get: args[2] } };
 		}
-		if (args[1] === "--set") {
-			if (!args[2]) {
-				throw new Error("Usage: wrk config --set <key>=<value>");
-			}
-			return { type: "config", flags: { ...flags, set: args[2] } };
-		}
-		if (args[1] === "--edit") {
-			return { type: "config", flags: { ...flags, edit: true } };
-		}
-		return { type: "config", flags };
+		
+		return {
+			type: 'workspace',
+			workspaceName,
+			flags
+		};
 	}
-
-	if (command === "list") {
-		return { type: "list", workspaceName, flags };
-	}
-
-	if (command === "create") {
-		if (!workspaceName) {
-			throw new Error("Usage: wrk create <workspace> [project]");
-		}
-		return { type: "create", workspaceName, projectName, flags };
-	}
-
-	if (command === "cd") {
-		if (!workspaceName || !projectName) {
-			throw new Error("Usage: wrk cd <workspace> <project>");
-		}
-		return { type: "cd", workspaceName, projectName, flags };
-	}
-
-	// Default: treat as workspace name
-	return { type: "workspace", workspaceName: command, flags };
 }
