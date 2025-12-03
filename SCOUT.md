@@ -10,34 +10,67 @@
 - **Interactivity:** [Inquirer](https://github.com/SBoudrias/Inquirer.js) for prompts.
 - **Testing:** `bun:test`
 
-## Key Features
-- **Project Navigation:**
-  - `wrk`: Open the last accessed project.
-  - `wrk <workspace>`: Interactively select a project from a specific workspace (e.g., `wrk client`).
-  - `wrk cd <workspace> <project>`: Output project path (for shell navigation).
-- **Management:**
-  - `wrk create <workspace> [project]`: Create new projects.
-  - `wrk list [workspace]`: View available workspaces and projects.
-- **Configuration:**
-  - Stored in `~/.config/wrk/config.json`.
-  - Configurable `workspace` root and `ide` command (default: `cursor`).
-  - `wrk config` commands to view/edit settings.
-
 ## Architecture
-- **Entry Point:** `src/index.ts` (`WrkCLI` class).
-- **Routing:** `src/command-router.ts`. Handles `wrk <command>` vs `wrk <workspace>` logic.
-- **Conventions:**
-  - Workspaces are subdirectories in your main workspace folder ending in `-work` (e.g., `~/workspace/client-work`).
-  - Projects are subdirectories within a workspace.
 
-## Getting Started
-1. **Install Bun:** `curl -fsSL https://bun.sh/install | bash`
-2. **Install Dependencies:** `bun install`
-3. **Build:** `bun run build` (Outputs to `dist/wrk.js`)
-4. **Link (Optional):** `bun run link` to make `wrk` available globally.
-5. **Run Tests:** `bun test`
+### Core Components
+1. **Entry Point** (`src/index.ts`): Main `WrkCLI` class that orchestrates all functionality
+2. **Command Router** (`src/command-router.ts`): Parses CLI arguments and determines command types
+3. **Utilities** (`src/utils.ts`): Helper functions for path expansion, time formatting, and config management
 
-## Current Status
-- Core functionality (open, create, list, config) is implemented.
-- Basic unit tests exist for utilities (`src/utils.ts`).
-- **Note:** The project strictly adheres to Bun APIs (`Bun.file`, `Bun.spawn`) instead of Node.js equivalents where possible.
+### Key Classes & Methods
+- `WrkCLI` class: Main application controller with methods for:
+  - Configuration management (`loadConfig`, `saveConfig`, `createDefaultConfig`)
+  - Project operations (`openProject`, `createProjectInWorkspace`, `openLastProject`)
+  - Workspace management (`listWorkspaces`, `listProjectsInWorkspace`)
+  - IDE integration (`validateIdeBinary`, `openConfig`)
+
+### Command Types
+- `workspace`: Open projects from a specific workspace (e.g., `wrk client`)
+- `create`: Create new projects (`wrk create client myapp`)
+- `list`: View workspaces/projects (`wrk list`, `wrk list client`)
+- `config`: Configuration management (`wrk config --get workspace`)
+- `cd`: Print project paths for shell integration
+- `last`: Open the most recently accessed project
+
+### Configuration
+- Stored in `~/.config/wrk/config.json` (or `$WRK_CONFIG_HOME/wrk/config.json`)
+- Contains: `workspace` (root directory), `ide` (IDE command), `lastProjectPath`
+- Workspaces are subdirectories ending in `-work` (e.g., `~/workspace/client-work`)
+- Projects are subdirectories within workspaces
+
+## Key Features
+- **Project Navigation:** Interactive project selection with "last accessed" timestamps
+- **IDE Integration:** Configurable IDE commands with validation
+- **Shell Integration:** `cd` command for easy directory navigation
+- **Scripting Support:** JSON output mode for automation
+- **Dry-run Mode:** Preview actions without execution
+- **Error Handling:** Comprehensive error handling with user-friendly messages
+
+## Development Commands
+- **Build:** `bun run build` (outputs to `dist/wrk.js`)
+- **Test:** `bun test` (run all tests) or `bun test src/index.test.ts` (specific file)
+- **Type Check:** `bunx tsc --noEmit`
+- **Install:** `bun install` (NEVER use npm/yarn/pnpm)
+
+## Testing Strategy
+- Unit tests for command parsing (`command-router.test.ts`)
+- Utility function tests (`index.test.ts`)
+- Test coverage for configuration path resolution and time formatting
+
+## First Tasks When Resuming
+1. **Run tests** to ensure everything works: `bun test`
+2. **Check type safety**: `bunx tsc --noEmit`
+3. **Build the project**: `bun run build`
+4. **Test basic functionality**: `bun run index.ts --help`
+5. **Review any failing tests** and fix type errors first
+
+## Code Conventions
+- Use Bun APIs (`Bun.file`, `Bun.spawn`) over Node.js equivalents
+- Import with `.js` extension for relative imports
+- Use `node:` prefix for built-in modules
+- Tabs for indentation
+- Interfaces at top of files
+- Error handling with try/catch and `process.exitCode = 1`
+
+---
+*Last updated: November 19, 2025*
